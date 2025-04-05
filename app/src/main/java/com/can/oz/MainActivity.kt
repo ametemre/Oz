@@ -10,16 +10,19 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,11 +48,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.can.oz.audio.AudioRecorder
 import com.can.oz.signal.SignalGenerator
 import com.can.oz.ui.theme.OzTheme
@@ -62,46 +68,57 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.collections.average
 import kotlin.collections.chunked
+import kotlin.math.roundToInt
+import kotlin.random.Random
 
 @OptIn(ExperimentalAnimationApi::class)
 class MainActivity : ComponentActivity() {
-    private lateinit var recorder: Recorder
-    private lateinit var player: Player
     private var isRecording by mutableStateOf(false)
-    private lateinit var audioRecorder: AudioRecorder
     private var microphonePermissionGranted by mutableStateOf(false)
     private var isRedLineVisible by mutableStateOf(false)
+
     private val audioVariations = listOf("Format 1", "Format 2", "Format 3")
     private var selectedFormat by mutableStateOf(audioVariations[0])
 
+    private lateinit var audioRecorder: AudioRecorder
     private val audioBuffer = mutableStateListOf<Short>()
     private val displayWaveform = mutableStateListOf<Float>()
 
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-
         setContent {
             OzTheme {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
+
                 var recordedFiles by remember { mutableStateOf(listOf<File>()) }
                 var showNameDialog by remember { mutableStateOf(false) }
                 var tempRecordingFile by remember { mutableStateOf<File?>(null) }
-                val permissionLauncher =
-                    rememberLauncherForActivityResult(RequestPermission()) { isGranted ->
-                        microphonePermissionGranted = isGranted
-                        if (isGranted && isRecording) {
-                            startRecording()
-                        }
-                    }
+
+
+                var currentNote by remember { mutableStateOf("C4") }
+                var elapsedTime by remember { mutableStateOf(0L) }
+                var timerSpeedMs by remember { mutableStateOf(100L) }
+
+
+                val permissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { isGranted ->
+                    microphonePermissionGranted = isGranted
+                }
 
                 LaunchedEffect(Unit) {
                     if (!microphonePermissionGranted) {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 }
-
+                LaunchedEffect(isRecording) {
+                    while (isRecording) {
+                        delay(timerSpeedMs)
+                        elapsedTime += timerSpeedMs
+                        currentNote = generateDummyNote()
+                    }
+                }
                 var showPopup by remember { mutableStateOf(false) }
                 // Signal UI state
                 var amplitude by remember { mutableStateOf(1f) }
@@ -129,18 +146,36 @@ class MainActivity : ComponentActivity() {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         SignalToolBox(
-                            amplitude = amplitude,
-                            onAmplitudeChange = { amplitude = it },
-                            frequency = frequency,
-                            onFrequencyChange = { frequency = it },
-                            phase = phase,
-                            onPhaseChange = { phase = it }
+                            amplitude = 1f,
+                            onAmplitudeChange = {},
+                            frequency = 440f,
+                            onFrequencyChange = {},
+                            phase = 0f,
+                            onPhaseChange = {},
+                            timerSpeedMs = timerSpeedMs,
+                            onTimerSpeedChange = { timerSpeedMs = it }
                         )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Şu anki nota
+                        //Text(text = "Current Note: $currentNote",color = Color.White,fontSize = 24.sp)
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Porte Animation
+                        //PorteAnimation(isRunning = isRecording, currentNote = currentNote, timerSpeedMs = timerSpeedMs)
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
+                            Porte(
+                                currentNote = currentNote,
+                                modifier = Modifier.fillMaxWidth()
+                                    .align(Alignment.BottomCenter))
                             RecordingTimer(isRecording)
 
                             if (isRedLineVisible) {
@@ -158,13 +193,26 @@ class MainActivity : ComponentActivity() {
                                             isRedLineVisible = false
                                             stopRecording()
                                         } else {
-                                            isRedLineVisible = true
+                                            val tempFile = File(context.cacheDir, "temp_recording.wav")
+                                            audioRecorder = AudioRecorder(tempFile)
+                                            tempRecordingFile = tempFile
                                             startRecording()
+                                            isRecording = true
+                                            isRedLineVisible = true
                                         }
                                     }
                                 }
                             )
+                            Spacer(modifier = Modifier.height(24.dp))
 
+                            // MiniFAB'lar
+                            recordedFiles.forEach { file ->
+                                DraggableMiniFab(iconRes = R.drawable.oz) {
+                                    scope.launch {
+                                        Player(context).play(file)
+                                    }
+                                }
+                            }
                             Row {
                                 AnimatedVisibility(visible = showPopup) {
                                     FullScreenPopupContent(
@@ -173,10 +221,29 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                             }
-
                             SoundWaveVisualization(isRecording)
                         }
                     }
+                }
+                if (showNameDialog) {
+                    FileNameDialog(
+                        onConfirm = { fileName ->
+                            tempRecordingFile?.let { tempFile ->
+                                val newFile = File(context.filesDir, "$fileName.wav")
+                                tempFile.copyTo(newFile, overwrite = true)
+                                tempFile.delete()
+
+                                // EN KRİTİK SATIR:
+                                recordedFiles = recordedFiles.toMutableList().apply { add(newFile) }
+                            }
+                            showNameDialog = false
+                        },
+                        onDismiss = {
+                            tempRecordingFile?.delete()
+                            showNameDialog = false
+                        }
+                    )
+
                 }
             }
         }
@@ -200,65 +267,6 @@ class MainActivity : ComponentActivity() {
                     displayWaveform.clear()
                     displayWaveform.addAll(sampled)
                 }
-            }
-        }
-    }
-
-    @Composable
-    fun SignalControlPanel(
-        amplitude: Float,
-        onAmplitudeChange: (Float) -> Unit,
-        frequency: Float,
-        onFrequencyChange: (Float) -> Unit,
-        phase: Float,
-        onPhaseChange: (Float) -> Unit
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Amplitude: %.2f".format(amplitude), modifier = Modifier.width(100.dp))
-                Slider(
-                    value = amplitude,
-                    onValueChange = onAmplitudeChange,
-                    valueRange = 0f..1f,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Frequency: %.0f Hz".format(frequency), modifier = Modifier.width(100.dp))
-                Slider(
-                    value = frequency,
-                    onValueChange = onFrequencyChange,
-                    valueRange = 20f..2000f,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Phase: %.2f π".format(phase / Math.PI.toFloat()), modifier = Modifier.width(100.dp))
-                Slider(
-                    value = phase,
-                    onValueChange = onPhaseChange,
-                    valueRange = 0f..(2 * Math.PI).toFloat(),
-                    modifier = Modifier.weight(1f)
-                )
             }
         }
     }
@@ -432,70 +440,55 @@ class MainActivity : ComponentActivity() {
             }
         )
     }
+
     @Composable
-    fun SignalToolBox(
-        amplitude: Float,
-        onAmplitudeChange: (Float) -> Unit,
-        frequency: Float,
-        onFrequencyChange: (Float) -> Unit,
-        phase: Float,
-        onPhaseChange: (Float) -> Unit
+    fun DraggableMiniFab(
+        iconRes: Int,
+        onClick: () -> Unit
     ) {
-        var expanded by remember { mutableStateOf(false) }
-        var dragOffset by remember { mutableStateOf(0f) }
+        var offsetX by remember { mutableStateOf(Random.nextInt(-50, 50).toFloat()) }
+        var offsetY by remember { mutableStateOf(Random.nextInt(-50, 50).toFloat()) }
+        var isDragging by remember { mutableStateOf(false) }
 
-        Column(
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .wrapContentHeight()
+                .size(80.dp)
+                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .graphicsLayer {
+                    alpha = if (isDragging) 0.7f else 1f
+                    shadowElevation = if (isDragging) 16f else 8f
+                }
                 .pointerInput(Unit) {
-                    detectVerticalDragGestures { _, dragAmount ->
-                        dragOffset += dragAmount
-                        if (dragOffset > 100f) { // 100px aşağı çekince açılıyor
-                            expanded = true
-                            dragOffset = 0f
-                        } else if (dragOffset < -100f) { // Yukarı çekince kapanıyor
-                            expanded = false
-                            dragOffset = 0f
+                    detectDragGestures(
+                        onDragStart = { isDragging = true },
+                        onDragEnd = { isDragging = false },
+                        onDragCancel = { isDragging = false },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX += dragAmount.x
+                            offsetY += dragAmount.y
                         }
-                    }
-                }
-                .padding(top = 8.dp)
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(24.dp),
-                color = Color.Gray.copy(alpha = 0.5f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(text = if (expanded) "Pull Up to Hide" else "Pull Down to Show", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-
-            AnimatedVisibility(visible = expanded) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    color = Color.DarkGray.copy(alpha = 0.7f),
-                    shape = MaterialTheme.shapes.medium,
-                    shadowElevation = 4.dp
-                ) {
-                    SignalControlPanel(
-                        amplitude = amplitude,
-                        onAmplitudeChange = onAmplitudeChange,
-                        frequency = frequency,
-                        onFrequencyChange = onFrequencyChange,
-                        phase = phase,
-                        onPhaseChange = onPhaseChange
                     )
-                }
+                },
+            shape = CircleShape,
+            shadowElevation = 8.dp
+        ) {
+            IconButton(
+                onClick = onClick,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Image(
+                    painter = painterResource(id = iconRes),
+                    contentDescription = "Mini FAB",
+                    modifier = Modifier.size(48.dp)
+                )
             }
         }
     }
-
-
+    private fun generateDummyNote(): String {
+        val notes = listOf("C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5")
+        return notes.random()
+    }
     @Preview(showBackground = true)
     @Composable
     fun PreviewRoundImageButton() {
