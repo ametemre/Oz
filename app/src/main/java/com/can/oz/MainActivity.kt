@@ -1,20 +1,29 @@
 package com.can.oz
 
+// MainActivity.kt
+// --------------------------------------------------
+// PLAN:
+// 1. Mikrofon kaydı başlatıldığında gelen verileri "ham" olarak normalize edip saklıyoruz.
+// 2. Ham sinyali sampling yapmadan doğrudan Canvas üzerinde çiziyoruz.
+// 3. Sinyal parametrelerini (amplitude, frequency, phase) sliderlar ile kontrol ediyoruz.
+// 4. SignalGenerator ile sentetik sinyal üretip onu da ayrı Canvas'ta gösterebiliriz.
+// 5. Swipe-down hareketi ile SignalControlPanel açılıyor/kapanıyor.
+// --------------------------------------------------
+
 import android.Manifest
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
+import androidx.annotation.RequiresPermission
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
@@ -27,37 +36,56 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
+import com.can.oz.audio.AudioRecorder
+import com.can.oz.signal.FftProcessor
+import com.can.oz.signal.SignalGenerator
 import com.can.oz.ui.theme.OzTheme
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import com.can.oz.ui.widgets.DigitalTimer
+import com.can.oz.ui.widgets.FftSpectrumView
+import kotlinx.coroutines.*
+import kotlin.math.PI
 
 @OptIn(ExperimentalAnimationApi::class)
 class MainActivity : ComponentActivity() {
+
+    // Ses kaydı ve UI durumları
     private var isRecording by mutableStateOf(false)
-    private var audioVariations = listOf("Format 1", "Format 2", "Format 3") // Add desired formats here
-    private var selectedFormat by mutableStateOf(audioVariations[0])
-    private var audioBuffer = mutableListOf<Short>()
-
-    // State to manage permission
+    private lateinit var audioRecorder: AudioRecorder
     private var microphonePermissionGranted by mutableStateOf(false)
-    private var isRedLineVisible by mutableStateOf(false) // New state for red line visibility
+    private var isRedLineVisible by mutableStateOf(false)
+    private val audioVariations = listOf("Format 1", "Format 2", "Format 3")
+    private var selectedFormat by mutableStateOf(audioVariations[0])
 
+    // Ham gelen veriyi saklayacağımız liste
+    private val visibleSamples = mutableStateListOf<Float>()
+    private val fftSpectrum = mutableStateListOf<Float>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        audioRecorder = AudioRecorder()
+
         setContent {
             OzTheme {
-                // Permission request launcher
+
                 val permissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { isGranted ->
                     microphonePermissionGranted = isGranted
-                    if (isGranted && isRecording) {
-                        startRecording() // Start recording if permission is granted after the request
+                    if (ActivityCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.RECORD_AUDIO
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        // TODO: Consider calling
+                        //    ActivityCompat#requestPermissions
+                        // here to request the missing permissions, and then overriding
+                        //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                        //                                          int[] grantResults)
+                        // to handle the case where the user grants the permission. See the documentation
+                        // for ActivityCompat#requestPermissions for more details.
                     }
+                    if (isGranted && isRecording) startRecording()
                 }
 
-                // Request permission if not granted
                 LaunchedEffect(Unit) {
                     if (!microphonePermissionGranted) {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -65,192 +93,180 @@ class MainActivity : ComponentActivity() {
                 }
 
                 var showPopup by remember { mutableStateOf(false) }
+                var isPanelVisible by remember { mutableStateOf(false) }
 
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    // Draw the red line in the background
-                    if (isRedLineVisible) {
-                        RedLine()
+                var amplitude by remember { mutableStateOf(1f) }
+                var frequency by remember { mutableStateOf(440f) }
+                var phase by remember { mutableStateOf(0f) }
+                val generator = remember { SignalGenerator() }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures { _, dragAmount ->
+                                if (dragAmount > 15) isPanelVisible = true
+                                if (dragAmount < -15) isPanelVisible = false
+                            }
+                        },
+                    verticalArrangement = Arrangement.Top,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+
+                    // Swipe ile açılan panel
+                    AnimatedVisibility(visible = isPanelVisible) {
+                        SignalControlPanel(
+                            amplitude = amplitude,
+                            onAmplitudeChange = { amplitude = it },
+                            frequency = frequency,
+                            onFrequencyChange = { frequency = it },
+                            phase = phase,
+                            onPhaseChange = { phase = it }
+                        )
                     }
-                    // Display the button in front of the line
-                    RoundImageButton(
-                        onLongClick = { showPopup = true },
-                        onClick = {
-                            if (microphonePermissionGranted) {
-                                if (isRecording) {
-                                    isRedLineVisible = false // Make the red line visible
-                                    stopRecording() // Stop recording if already recording
-                                } else {
-                                    isRedLineVisible = true // Make the red line visible
-                                    startRecording() // Start recording if not already
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        RecordingTimer(isRecording)
+
+                        if (isRedLineVisible) RedLine()
+
+                        RoundImageButton(
+                            onLongClick = { showPopup = true },
+                            onClick = {
+                                if (microphonePermissionGranted) {
+                                    if (isRecording) {
+                                        isRedLineVisible = false
+                                        stopRecording()
+                                    } else {
+                                        isRedLineVisible = true
+                                        startRecording()
+                                    }
                                 }
                             }
-                        }
-                    )
-
-                    AnimatedVisibility(visible = showPopup) {
-                        FullScreenPopupContent(onDismiss = { showPopup = false }, onFormatSelected = { selectedFormat = it })
+                        )
                     }
-
-                    // Visualize Sound Wave
-                    SoundWaveVisualization(isRecording)
                 }
             }
         }
     }
 
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     private fun startRecording() {
-        if (microphonePermissionGranted) {
-            isRecording = true
-            // Start a coroutine for audio recording
+        isRecording = true
+        visibleSamples.clear()
+        fftSpectrum.clear()
+        audioRecorder.startRecording { buffer ->
             CoroutineScope(Dispatchers.IO).launch {
-                recordAudio()
+                val normalized = buffer.map { it.toFloat() / Short.MAX_VALUE }
+                withContext(Dispatchers.Main) {
+                    visibleSamples.addAll(normalized)
+                    if (visibleSamples.size > 1024) {
+                        visibleSamples.removeRange(0, visibleSamples.size - 1024)
+                    }
+
+                    // FFT Hesapla
+                    if (visibleSamples.size >= 512) {
+                        val fftInput = visibleSamples.takeLast(512).toFloatArray()
+                        val spectrum = FftProcessor.computeFFT(fftInput)
+                        fftSpectrum.clear()
+                        fftSpectrum.addAll(spectrum.take(fftInput.size / 2)) // sadece pozitif frekanslar
+                    }
+                }
             }
         }
     }
+
 
     private fun stopRecording() {
         isRecording = false
-    }
-
-    private suspend fun recordAudio() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return // Exit if permission is not granted
-        }
-        // Recording audio logic
-        val bufferSize = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-        )
-        val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufferSize
-        )
-
-        audioRecord.startRecording()
-
-        val audioData = ShortArray(bufferSize)
-        while (isRecording) {
-            audioRecord.read(audioData, 0, bufferSize)
-            // Process audio data here to create variations
-        }
-
-        audioRecord.stop()
-        audioRecord.release()
+        audioRecorder.stopRecording()
     }
 
     @Composable
-    fun SoundWaveVisualization(isRecording: Boolean) {
-        if (isRecording) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(200.dp)) {
-                val width = size.width
-                val midY = size.height / 2
-                val waveWidth = width / audioBuffer.size
-
-                // Draw the waveform
-                for (i in audioBuffer.indices) {
-                    val x = i * waveWidth
-                    val y = midY + (audioBuffer[i] / Short.MAX_VALUE.toFloat()) * midY * 0.8f // Scale the wave height
-                    if (i == 0) {
-                        ///moveTo(x, y)
-                    } else {
-                        //lineTo(x, y)
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    fun AnimatedRedLine(isVisible: Boolean) {
-        // Define animation state
-        var width by remember { mutableStateOf(0f) }
-        var yOffset by remember { mutableStateOf(0f) }
-
-        // Update width and yOffset when the line becomes visible
-        LaunchedEffect(isVisible) {
-            if (isVisible) {
-                // Animate width to full width
-                width = 200f // Set this to your desired maximum width
-                // Animate the yOffset to create a parabolic effect
-                yOffset = 30f // Change this based on the parabolic effect you want
-            } else {
-                // Reset width and yOffset
-                width = 0f
-                yOffset = 0f
-            }
-        }
-
-
-        // Draw the animated line
-        Canvas(modifier = Modifier
-            .fillMaxWidth()
-            .height(2.dp)) {
-            drawLine(
-                color = Color.Red,
-                start = Offset(x = (size.width - width) / 2, y = (size.height / 2) - yOffset),
-                end = Offset(x = (size.width + width) / 2, y = (size.height / 2) - yOffset),
-                strokeWidth = 2f
-            )
-        }
-    }
-
-    @Composable
-    fun FullScreenPopupContent(onDismiss: () -> Unit, onFormatSelected: (String) -> Unit) {
-        Surface(
-            shape = MaterialTheme.shapes.medium,
-            color = Color(0x99000000), // 59% transparent black
-            modifier = Modifier.fillMaxSize().padding(16.dp)
+    fun SignalControlPanel(
+        amplitude: Float,
+        onAmplitudeChange: (Float) -> Unit,
+        frequency: Float,
+        onFrequencyChange: (Float) -> Unit,
+        phase: Float,
+        onPhaseChange: (Float) -> Unit
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = "Select Audio Format:", color = Color.White)
-                audioVariations.forEach { format ->
-                    Text(
-                        text = format,
-                        color = Color.White,
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .pointerInput(Unit) {
-                                detectTapGestures(onTap = { onFormatSelected(format) })
-                            }
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = onDismiss) {
-                    Text("Close")
-                }
+                Text("Amplitude: %.2f".format(amplitude), modifier = Modifier.width(100.dp))
+                Slider(
+                    value = amplitude,
+                    onValueChange = onAmplitudeChange,
+                    valueRange = 0f..1f,
+                    modifier = Modifier.weight(1f)
+                )
             }
-        }
-    }
 
-    @Composable
-    fun RoundImageButton(onLongClick: () -> Unit, onClick: () -> Unit) {
-        Surface(
-            modifier = Modifier.size(155.dp),
-            shape = CircleShape,
-            color = Color.Transparent,
-            shadowElevation = 10.dp
-        ) {
-            IconButton(
-                onClick = onClick,
-                modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { onLongClick() })
-                }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.oz), // Change this to your image
-                    contentDescription = "Round Button",
-                    modifier = Modifier.size(100.dp)
+                Text("Frequency: %.0f Hz".format(frequency), modifier = Modifier.width(100.dp))
+                Slider(
+                    value = frequency,
+                    onValueChange = onFrequencyChange,
+                    valueRange = 20f..2000f,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Phase: %.2f π".format(phase / Math.PI.toFloat()), modifier = Modifier.width(100.dp))
+                Slider(
+                    value = phase,
+                    onValueChange = onPhaseChange,
+                    valueRange = 0f..(2 * Math.PI).toFloat(),
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
     }
+    @Composable
+    fun RecordingTimer(isRecording: Boolean) {
+        var secondsElapsed by remember { mutableStateOf(0) }
 
+        LaunchedEffect(isRecording) {
+            if (isRecording) {
+                secondsElapsed = 0
+                while (isRecording) {
+                    delay(1000)
+                    secondsElapsed++
+                }
+            }
+        }
+
+        if (isRecording) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 60.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                DigitalTimer(
+                    timeSeconds = secondsElapsed,
+                    segmentColor = Color.Green
+                )
+            }
+        }
+    }
     @Composable
     fun RedLine() {
         Box(modifier = Modifier
@@ -261,21 +277,9 @@ class MainActivity : ComponentActivity() {
                     color = Color.Red,
                     start = Offset(0f, size.height / 2),
                     end = Offset(x = size.width, y = size.height / 2),
-                    strokeWidth = 2f // Line thickness
+                    strokeWidth = 2f
                 )
             }
         }
-    }
-
-    @Preview(showBackground = true)
-    @Composable
-    fun PreviewRoundImageButton() {
-        OzTheme {
-            RoundImageButton({}, {})
-        }
-    }
-
-    companion object {
-        const val SAMPLE_RATE = 44100 // Sample rate for audio
     }
 }
