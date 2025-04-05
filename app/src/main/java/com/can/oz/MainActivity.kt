@@ -25,74 +25,153 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.can.oz.ui.theme.OzTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalAnimationApi::class)
 class MainActivity : ComponentActivity() {
     private var isRecording by mutableStateOf(false)
-    private var audioVariations = listOf("Format 1", "Format 2", "Format 3") // Add desired formats here
+    private var audioVariations = listOf("Format 1", "Format 2", "Format 3")
     private var selectedFormat by mutableStateOf(audioVariations[0])
     private var audioBuffer = mutableListOf<Short>()
 
-    // State to manage permission
     private var microphonePermissionGranted by mutableStateOf(false)
-    private var isRedLineVisible by mutableStateOf(false) // New state for red line visibility
+    private var isRedLineVisible by mutableStateOf(false)
 
+    // --- EKLEDİKLERİMİZ ---
+    private var elapsedTime by mutableStateOf(0L)
+    private var currentNote by mutableStateOf("C4")
+    private var recordedFiles by mutableStateOf(listOf<File>())
+    private var showNameDialog by mutableStateOf(false)
+    private var tempRecordingFile by mutableStateOf<File?>(null)
+
+    private lateinit var recorder: Recorder
+    private lateinit var player: Player
+
+    private val retroTextStyle = TextStyle(
+        color = Color(0xFFCCCCCC),
+        fontSize = 48.sp,
+        fontFamily = FontFamily.Monospace
+    )
+
+    private val retroNoteTextStyle = TextStyle(
+        color = Color(0xFF88FF88),
+        fontSize = 36.sp,
+        fontFamily = FontFamily.Monospace
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             OzTheme {
-                // Permission request launcher
                 val permissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { isGranted ->
                     microphonePermissionGranted = isGranted
                     if (isGranted && isRecording) {
-                        startRecording() // Start recording if permission is granted after the request
+                        startRecording()
                     }
                 }
 
-                // Request permission if not granted
                 LaunchedEffect(Unit) {
                     if (!microphonePermissionGranted) {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 }
 
+                LaunchedEffect(isRecording) {
+                    while (isRecording) {
+                        delay(100)
+                        elapsedTime += 100
+                        currentNote = generateDummyNote()
+                    }
+                }
+
                 var showPopup by remember { mutableStateOf(false) }
 
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    // Draw the red line in the background
                     if (isRedLineVisible) {
                         RedLine()
                     }
-                    // Display the button in front of the line
-                    RoundImageButton(
-                        onLongClick = { showPopup = true },
-                        onClick = {
-                            if (microphonePermissionGranted) {
-                                if (isRecording) {
-                                    isRedLineVisible = false // Make the red line visible
-                                    stopRecording() // Stop recording if already recording
-                                } else {
-                                    isRedLineVisible = true // Make the red line visible
-                                    startRecording() // Start recording if not already
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = formatElapsedTime(elapsedTime),
+                            style = retroTextStyle
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = "Note: $currentNote",
+                            style = retroNoteTextStyle
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        PorteAnimation(isRunning = isRecording, currentNote = currentNote)
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        RoundImageButton(
+                            onLongClick = { showPopup = true },
+                            onClick = {
+                                if (microphonePermissionGranted) {
+                                    if (isRecording) {
+                                        isRedLineVisible = false
+                                        stopRecording()
+                                    } else {
+                                        isRedLineVisible = true
+                                        startRecording()
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
 
                     AnimatedVisibility(visible = showPopup) {
                         FullScreenPopupContent(onDismiss = { showPopup = false }, onFormatSelected = { selectedFormat = it })
                     }
 
-                    // Visualize Sound Wave
                     SoundWaveVisualization(isRecording)
+
+                    recordedFiles.forEach { file ->
+                        DraggableMiniFab(iconRes = R.drawable.oz) {
+                            CoroutineScope(Dispatchers.Main).launch {
+                                player = Player(this@MainActivity)
+                                player.play(file)
+                            }
+                        }
+                    }
+
+                    if (showNameDialog) {
+                        FileNameDialog(
+                            onConfirm = { fileName ->
+                                tempRecordingFile?.let { tempFile ->
+                                    val newFile = File(filesDir, "$fileName.wav")
+                                    tempFile.copyTo(newFile, overwrite = true)
+                                    recordedFiles = recordedFiles + newFile
+                                    tempFile.delete()
+                                }
+                                showNameDialog = false
+                            },
+                            onDismiss = {
+                                tempRecordingFile?.delete()
+                                showNameDialog = false
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -101,7 +180,10 @@ class MainActivity : ComponentActivity() {
     private fun startRecording() {
         if (microphonePermissionGranted) {
             isRecording = true
-            // Start a coroutine for audio recording
+            elapsedTime = 0L
+            val tempFile = File(cacheDir, "temp_recording.wav")
+            recorder = Recorder(tempFile)
+            tempRecordingFile = tempFile
             CoroutineScope(Dispatchers.IO).launch {
                 recordAudio()
             }
@@ -110,13 +192,13 @@ class MainActivity : ComponentActivity() {
 
     private fun stopRecording() {
         isRecording = false
+        showNameDialog = true
     }
 
     private suspend fun recordAudio() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return // Exit if permission is not granted
+            return
         }
-        // Recording audio logic
         val bufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
@@ -133,11 +215,22 @@ class MainActivity : ComponentActivity() {
         val audioData = ShortArray(bufferSize)
         while (isRecording) {
             audioRecord.read(audioData, 0, bufferSize)
-            // Process audio data here to create variations
         }
 
         audioRecord.stop()
         audioRecord.release()
+    }
+
+    private fun formatElapsedTime(ms: Long): String {
+        val seconds = (ms / 1000) % 60
+        val minutes = (ms / 1000) / 60
+        val millis = (ms % 1000) / 100
+        return "%02d:%02d.%d".format(minutes, seconds, millis)
+    }
+
+    private fun generateDummyNote(): String {
+        val notes = listOf("C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5")
+        return notes.random()
     }
 
     @Composable
@@ -151,7 +244,8 @@ class MainActivity : ComponentActivity() {
                 // Draw the waveform
                 for (i in audioBuffer.indices) {
                     val x = i * waveWidth
-                    val y = midY + (audioBuffer[i] / Short.MAX_VALUE.toFloat()) * midY * 0.8f // Scale the wave height
+                    val y =
+                        midY + (audioBuffer[i] / Short.MAX_VALUE.toFloat()) * midY * 0.8f // Scale the wave height
                     if (i == 0) {
                         ///moveTo(x, y)
                     } else {
@@ -161,7 +255,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
     @Composable
     fun AnimatedRedLine(isVisible: Boolean) {
         // Define animation state
@@ -184,9 +277,11 @@ class MainActivity : ComponentActivity() {
 
 
         // Draw the animated line
-        Canvas(modifier = Modifier
-            .fillMaxWidth()
-            .height(2.dp)) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+        ) {
             drawLine(
                 color = Color.Red,
                 start = Offset(x = (size.width - width) / 2, y = (size.height / 2) - yOffset),
@@ -253,9 +348,11 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun RedLine() {
-        Box(modifier = Modifier
-            .fillMaxWidth()
-            .height(2.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+        ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 drawLine(
                     color = Color.Red,
@@ -267,15 +364,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @Preview(showBackground = true)
     @Composable
-    fun PreviewRoundImageButton() {
-        OzTheme {
-            RoundImageButton({}, {})
-        }
-    }
+    fun FileNameDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) { /* standart dosya adı dialog */ }
+
+    @Composable
+    fun DraggableMiniFab(iconRes: Int, onClick: () -> Unit) { /* draggable fab yapısı */ }
 
     companion object {
-        const val SAMPLE_RATE = 44100 // Sample rate for audio
+        const val SAMPLE_RATE = 44100
     }
 }
