@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Frequency Input -->
+    <TextView
+        android:id="@+id/frequency_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Frequency (Hz)"
+        android:textSize="16sp"/>
+
+    <EditText
+        android:id="@+id/frequency_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="numberDecimal"
+        android:hint="440"
+        android:textSize="16sp" />
+
+    <!-- Duration Input -->
+    <TextView
+        android:id="@+id/duration_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Duration (Seconds)"
+        android:textSize="16sp"/>
+
+    <EditText
+        android:id="@+id/duration_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="numberDecimal"
+        android:hint="1.0"
+        android:textSize="16sp" />
+
+    <!-- Modulation Frequency Input -->
+    <TextView
+        android:id="@+id/mod_freq_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Modulation Frequency (Hz)"
+        android:textSize="16sp"/>
+
+    <EditText
+        android:id="@+id/mod_freq_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="numberDecimal"
+        android:hint="5"
+        android:textSize="16sp" />
+
+    <!-- Modulation Index Input -->
+    <TextView
+        android:id="@+id/mod_index_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Modulation Index"
+        android:textSize="16sp"/>
+
+    <EditText
+        android:id="@+id/mod_index_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="numberDecimal"
+        android:hint="1.0"
+        android:textSize="16sp" />
+
+    <!-- ADSR Controls -->
+    <TextView
+        android:id="@+id/attack_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Attack"
+        android:textSize="16sp"/>
+
+    <SeekBar
+        android:id="@+id/attack_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="10" />
+
+    <TextView
+        android:id="@+id/decay_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Decay"
+        android:textSize="16sp"/>
+
+    <SeekBar
+        android:id="@+id/decay_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="10" />
+
+    <TextView
+        android:id="@+id/sustain_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Sustain"
+        android:textSize="16sp"/>
+
+    <SeekBar
+        android:id="@+id/sustain_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="50" />
+
+    <TextView
+        android:id="@+id/release_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Release"
+        android:textSize="16sp"/>
+
+    <SeekBar
+        android:id="@+id/release_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="10" />
+
+    <!-- Play Button -->
+    <Button
+        android:id="@+id/play_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Play Sound"
+        android:textSize="18sp"
+        android:layout_marginTop="16dp"/>
+
+    <!-- Display Frequency -->
+    <TextView
+        android:id="@+id/frequency_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Frequency: 440 Hz"
+        android:textSize="18sp"
+        android:layout_marginTop="16dp"/>
+
+    <!-- Display Modulation Type -->
+    <TextView
+        android:id="@+id/mod_type_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Modulation: AM"
+        android:textSize="18sp"
+        android:layout_marginTop="8dp"/>
+    <x.com.oz.FrequencyView
+        android:id="@+id/frequency_graph"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:layout_marginTop="16dp"
+        android:background="#000000" />
+</LinearLayout>

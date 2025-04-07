@@ -1,0 +1,1 @@
+CMAKE = "/home/kurmes/StudioProjects/Oz/cmake-3.18.1/bin/cmake"

@@ -1,0 +1,1 @@
+/home/kurmes/StudioProjects/Oz/rust/audio_engine/target/aarch64-linux-android/release/libozsynth.so: /home/kurmes/StudioProjects/Oz/rust/audio_engine/src/adsr.rs /home/kurmes/StudioProjects/Oz/rust/audio_engine/src/lib.rs /home/kurmes/StudioProjects/Oz/rust/audio_engine/src/notes.rs /home/kurmes/StudioProjects/Oz/rust/audio_engine/src/synth.rs
